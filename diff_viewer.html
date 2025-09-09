@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub-like Diff Viewer</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #121a23;
+      --muted: #8b9eb1;
+      --text: #e6edf3;
+      --border: #263141;
+      --accent: #2f81f7;
+      --added-bg: #102b18;
+      --added-border: #2ea043;
+      --removed-bg: #3c0b10;
+      --removed-border: #f85149;
+      --modified-bg: #0b2942;
+      --modified-border: #1f6feb;
+      --inline-add: #2ea04333;
+      --inline-del: #f8514933;
+      --inline-text-add: #b6f0c2;
+      --inline-text-del: #ffb7b3;
+      --gutter-bg: #0b1320;
+      --hunk-bg: #0d1826;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: linear-gradient(180deg, #0b1015 0%, #0f1419 100%);
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 24px auto 48px;
+      padding: 0 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+
+    .badge {
+      background: #101a28;
+      color: #9fb6cc;
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+
+    .toolbar {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    @media (min-width: 860px) {
+      .toolbar { grid-template-columns: 1fr auto; align-items: center; }
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+    }
+
+    .control-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #0e1722;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 10px;
+    }
+
+    .control-group label { color: var(--muted); font-size: 12px; }
+    .control-group input[type="number"] { width: 64px; }
+
+    .btn, .select, input[type="file"], input[type="number"], .toggle, .view-select label {
+      appearance: none;
+      color: var(--text);
+      background: #0b1320;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+
+    .btn.primary {
+      background: linear-gradient(180deg, #2563eb, #1e40af);
+      border-color: #2856c3;
+      cursor: pointer;
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+
+    .view-select {
+      display: inline-flex;
+      background: #0b1320;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .view-select input { display: none; }
+    .view-select label {
+      border: none;
+      background: transparent;
+      padding: 6px 10px;
+      cursor: pointer;
+      border-right: 1px solid var(--border);
+    }
+    .view-select label:last-child { border-right: 0; }
+    .view-select input:checked + label {
+      background: #0f1a2a;
+      color: #b9d1ff;
+    }
+
+    .inputs {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .dropzones {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    @media (min-width: 860px) {
+      .dropzones { grid-template-columns: 1fr 1fr; }
+    }
+
+    .dropzone {
+      background: repeating-linear-gradient(135deg, #0e1623, #0e1623 10px, #0d1420 10px, #0d1420 20px);
+      border: 1px dashed #2c3a52;
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 86px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      justify-content: center;
+    }
+    .dropzone strong { color: #b3c3d6; }
+    .dropzone.dragover { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+
+    .legend { color: var(--muted); font-size: 12px; display: flex; gap: 10px; }
+    .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .swatch.add { background: var(--added-bg); border: 1px solid var(--added-border); }
+    .swatch.del { background: var(--removed-bg); border: 1px solid var(--removed-border); }
+    .swatch.mod { background: var(--modified-bg); border: 1px solid var(--modified-border); }
+
+    .diff {
+      margin-top: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .diff-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #0f1a2a;
+    }
+
+    .filename { color: #b9d1ff; font-weight: 600; }
+    .summary { color: var(--muted); }
+
+    table.diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .gutter {
+      width: 56px;
+      background: var(--gutter-bg);
+      color: #8fa2b5;
+      text-align: right;
+      padding: 0 8px;
+      user-select: none;
+      border-right: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .codecell {
+      font-variant-ligatures: none;
+      white-space: pre;
+      overflow: hidden;
+      padding: 2px 10px;
+      vertical-align: top;
+    }
+    .wrap .codecell { white-space: pre-wrap; word-break: break-word; }
+
+    tr.ctx td { background: #0d1624; color: #9fb1c6; }
+    tr.hunk td { background: var(--hunk-bg); color: #9fb1c6; }
+
+    tr.add td { background: var(--added-bg); border-top: 1px solid #143b22; border-bottom: 1px solid #143b22; }
+    tr.del td { background: var(--removed-bg); border-top: 1px solid #4e1417; border-bottom: 1px solid #4e1417; }
+    tr.mod td { background: var(--modified-bg); }
+
+    /* Side-specific cell backgrounds for split view */
+    td.cell-add { background: var(--added-bg); border-top: 1px solid #143b22; border-bottom: 1px solid #143b22; }
+    td.cell-del { background: var(--removed-bg); border-top: 1px solid #4e1417; border-bottom: 1px solid #4e1417; }
+
+    ins { background: var(--inline-add); color: var(--inline-text-add); text-decoration: none; padding: 0 0; }
+    del { background: var(--inline-del); color: var(--inline-text-del); text-decoration: none; padding: 0 0; }
+
+    .hunk-btn { cursor: pointer; color: #b9d1ff; background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; }
+
+    .footer-note { color: var(--muted); text-align: center; margin: 16px 0; font-size: 12px; }
+
+    /* Editors */
+    .editors {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    @media (min-width: 860px) {
+      .editors { grid-template-columns: 1fr 1fr; }
+    }
+    .editor {
+      background: #0e1623;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .editor label { color: #b3c3d6; font-weight: 600; }
+    .editor textarea {
+      width: 100%;
+      min-height: 180px;
+      resize: vertical;
+      color: var(--text);
+      background: #0b1320;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M5 3h6a2 2 0 0 1 2 2v6H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="#b9d1ff" stroke-width="1.5"/>
+          <path d="M13 13h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-6v-8Z" stroke="#8fb2ff" stroke-width="1.5"/>
+          <path d="M13 3h6M5 21h6" stroke="#2f81f7" stroke-width="1.5"/>
+        </svg>
+        <span>Diff Viewer</span>
+        <span class="badge">GitHub-like</span>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span class="key"><span class="swatch add"></span>Added</span>
+        <span class="key"><span class="swatch del"></span>Removed</span>
+        <span class="key"><span class="swatch mod"></span>Modified</span>
+      </div>
+    </div>
+
+    <div class="toolbar" role="region" aria-label="Diff controls">
+      <div class="controls">
+        <div class="view-select" role="radiogroup" aria-label="View mode">
+          <input id="view-unified" type="radio" name="view" value="unified" checked>
+          <label for="view-unified" title="Unified view">Unified</label>
+          <input id="view-sbs" type="radio" name="view" value="split">
+          <label for="view-sbs" title="Side-by-side view">Side-by-side</label>
+        </div>
+
+        <div class="control-group">
+          <label for="context">Context</label>
+          <input id="context" type="number" min="0" max="100" step="1" value="3">
+        </div>
+        <div class="control-group">
+          <label><input id="ignore-ws" class="toggle" type="checkbox"> Ignore whitespace</label>
+        </div>
+        <div class="control-group">
+          <label><input id="wrap-lines" class="toggle" type="checkbox" checked> Wrap lines</label>
+        </div>
+      </div>
+
+      <div class="inputs">
+        <label>Old file <input id="file-a" type="file" accept=".txt,.log,.md,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rb,.rs,.java,.c,.cpp,.h,.cs,.sh,.html,.css"></label>
+        <label>New file <input id="file-b" type="file" accept=".txt,.log,.md,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.jsx,.py,.go,.rb,.rs,.java,.c,.cpp,.h,.cs,.sh,.html,.css"></label>
+        <select id="samples" class="select" title="Load sample">
+          <option value="">Load sample…</option>
+          <option value="tiny">Tiny change</option>
+          <option value="rename">Rename + edits</option>
+          <option value="large">Large w/ unchanged context</option>
+        </select>
+        <button id="run" class="btn primary">Render diff</button>
+      </div>
+
+      <div class="dropzones">
+        <div id="drop-a" class="dropzone" aria-label="Drop old file here" tabindex="0">
+          <strong>Old file</strong>
+          <span>Drop a file here or use the picker above.</span>
+        </div>
+        <div id="drop-b" class="dropzone" aria-label="Drop new file here" tabindex="0">
+          <strong>New file</strong>
+          <span>Drop a file here or use the picker above.</span>
+        </div>
+      </div>
+
+      <div class="editors" aria-label="Inline editors">
+        <div class="editor">
+          <label for="text-a">Old content</label>
+          <textarea id="text-a" placeholder="Paste or type old file content here…"></textarea>
+        </div>
+        <div class="editor">
+          <label for="text-b">New content</label>
+          <textarea id="text-b" placeholder="Paste or type new file content here…"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div id="diff" class="diff" aria-live="polite" aria-busy="false">
+      <div class="diff-header">
+        <div class="filename" id="filename">No files loaded</div>
+        <div class="summary" id="summary">—</div>
+      </div>
+      <div id="diff-body"></div>
+    </div>
+
+    <div class="footer-note">Drop files or paste text to compare. All processing stays in your browser.</div>
+  </div>
+
+  <script>
+  // --- Functional utilities ---
+  const compose = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+  const clamp = (min, v, max) => Math.max(min, Math.min(v, max));
+  const identity = (x) => x;
+  const debounce = (fn, ms=200) => {
+    let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  };
+
+  // --- Text helpers ---
+  const splitLines = (text) => text.replace(/\r\n?/g, "\n").split("\n");
+  const normalizeWS = (s) => s.replace(/[\t ]+/g, ' ').trim();
+  const lineKey = (s, ignoreWS) => ignoreWS ? normalizeWS(s) : s;
+
+  // --- Myers diff (generic sequence diff) ---
+  function diffSequence(a, b, eq=(x,y)=>x===y) {
+    const N = a.length, M = b.length;
+    const max = N + M;
+    const v = new Map();
+    v.set(1, 0);
+    const trace = [];
+    for (let d=0; d<=max; d++) {
+      const vd = new Map();
+      for (let k = -d; k <= d; k += 2) {
+        const km = k - 1, kp = k + 1;
+        let x;
+        if (k === -d || (k !== d && (v.get(km) ?? -1) < (v.get(kp) ?? -1))) {
+          x = v.get(kp) ?? 0;
+        } else {
+          x = (v.get(km) ?? 0) + 1;
+        }
+        let y = x - k;
+        while (x < N && y < M && eq(a[x], b[y])) { x++; y++; }
+        vd.set(k, x);
+        if (x >= N && y >= M) { trace.push(vd); return backtrack(trace, a, b, eq); }
+      }
+      trace.push(vd);
+      v.clear(); vd.forEach((val, key) => v.set(key, val));
+    }
+    return [];
+  }
+
+  function backtrack(trace, a, b, eq) {
+    let x = a.length, y = b.length;
+    const ops = [];
+    for (let d = trace.length - 1; d >= 0; d--) {
+      const vd = trace[d];
+      const k = x - y;
+      const km = k - 1, kp = k + 1;
+      let prevK, prevX;
+      if (k === -d || (k !== d && (vd.get(km) ?? -1) < (vd.get(kp) ?? -1))) {
+        prevK = kp; prevX = vd.get(prevK) ?? 0; // from down
+      } else {
+        prevK = km; prevX = (vd.get(prevK) ?? 0) + 1; // from right
+      }
+      const prevY = prevX - prevK;
+      while (x > prevX && y > prevY) {
+        ops.push({ op: 'equal', aIndex: x-1, bIndex: y-1 });
+        x--; y--;
+      }
+      if (d === 0) break;
+      if (x === prevX) {
+        ops.push({ op: 'insert', aIndex: x-1, bIndex: prevY });
+        y = prevY;
+      } else {
+        ops.push({ op: 'delete', aIndex: prevX, bIndex: y-1 });
+        x = prevX;
+      }
+    }
+    return ops.reverse();
+  }
+
+  // Deterministic LCS diff for lines (robust for small/medium inputs)
+  function diffLCS(a, b, eq=(x,y)=>x===y) {
+    const N = a.length, M = b.length;
+    const dp = Array.from({length: N+1}, () => new Uint32Array(M+1));
+    for (let i=1; i<=N; i++) {
+      const ai = a[i-1];
+      const dpi = dp[i], dpim = dp[i-1];
+      for (let j=1; j<=M; j++) {
+        dpi[j] = eq(ai, b[j-1]) ? dpim[j-1] + 1 : (dpi[j-1] > dpim[j] ? dpi[j-1] : dpim[j]);
+      }
+    }
+    const ops = [];
+    let i = N, j = M;
+    while (i>0 || j>0) {
+      if (i>0 && j>0 && eq(a[i-1], b[j-1])) {
+        ops.push({ op: 'equal', aIndex: i-1, bIndex: j-1 });
+        i--; j--;
+      } else if (j>0 && (i===0 || dp[i][j-1] >= dp[i-1][j])) {
+        ops.push({ op: 'insert', aIndex: i-1, bIndex: j-1 });
+        j--;
+      } else if (i>0) {
+        ops.push({ op: 'delete', aIndex: i-1, bIndex: j-1 });
+        i--;
+      }
+    }
+    return ops.reverse();
+  }
+
+  function diffLines(a, b, eq=(x,y)=>x===y) {
+    const N = a.length, M = b.length;
+    const maxCells = 2000000; // ~2M cells guard
+    if (N * M <= maxCells) return diffLCS(a, b, eq);
+    return diffSequence(a, b, eq);
+  }
+
+  // --- Line-level diff ---
+  function computeLineDiff(aText, bText, options) {
+    const { ignoreWhitespace } = options;
+    const aLines = splitLines(aText);
+    const bLines = splitLines(bText);
+    const aKeys = aLines.map(l => lineKey(l, ignoreWhitespace));
+    const bKeys = bLines.map(l => lineKey(l, ignoreWhitespace));
+    const ops = diffLines(aKeys, bKeys, (x,y)=>x===y);
+
+    // Map ops to hunks of lines
+    const hunks = [];
+    let i = 0, j = 0;
+    for (const op of ops) {
+      if (op.op === 'equal') {
+        const aLine = aLines[i];
+        const bLine = bLines[j];
+        hunks.push({ type: 'ctx', a: { num: i+1, text: aLine }, b: { num: j+1, text: bLine } });
+        i++; j++;
+      } else if (op.op === 'delete') {
+        const aLine = aLines[i];
+        hunks.push({ type: 'del', a: { num: i+1, text: aLine }, b: { num: '', text: '' } });
+        i++;
+      } else if (op.op === 'insert') {
+        const bLine = bLines[j];
+        hunks.push({ type: 'add', a: { num: '', text: '' }, b: { num: j+1, text: bLine } });
+        j++;
+      }
+    }
+    return { hunks, aLines, bLines };
+  }
+
+  // Pair adjacent delete/insert as modifications when lines are similar
+  function lcsLen(a, b) {
+    const N = a.length, M = b.length;
+    const dp = Array.from({length: N+1}, () => new Uint16Array(M+1));
+    for (let i=1; i<=N; i++) {
+      const ai = a.charCodeAt(i-1);
+      const dpi = dp[i], dpim = dp[i-1];
+      for (let j=1; j<=M; j++) {
+        dpi[j] = ai === b.charCodeAt(j-1) ? dpim[j-1] + 1 : (dpi[j-1] > dpim[j] ? dpi[j-1] : dpim[j]);
+      }
+    }
+    return dp[N][M];
+  }
+
+  function similarity(a, b) {
+    if (!a && !b) return 1;
+    const lcs = lcsLen(a, b);
+    const denom = Math.max(a.length, b.length) || 1;
+    return lcs / denom;
+  }
+
+  function pairModifications(hunks) {
+    const out = [];
+    for (let idx = 0; idx < hunks.length; idx++) {
+      const cur = hunks[idx];
+      const nxt = hunks[idx+1];
+      if (cur && nxt && cur.type === 'del' && nxt.type === 'add') {
+        const sim = similarity(cur.a.text, nxt.b.text);
+        if (sim >= 0.35) { // treat as a modification only if reasonably similar
+          out.push({ type: 'mod', a: cur.a, b: nxt.b });
+          idx++; // skip next
+          continue;
+        }
+      }
+      out.push(cur);
+    }
+    return out;
+  }
+
+  // Group into display hunks with context radius
+  function groupWithContext(lines, contextSize) {
+    const groups = [];
+    let start = 0;
+    const n = lines.length;
+    const isChange = (t) => t === 'add' || t === 'del' || t === 'mod';
+    while (start < n) {
+      if (!isChange(lines[start].type)) { start++; continue; }
+      let end = start;
+      while (end+1 < n && isChange(lines[end+1].type)) end++;
+      let gStart = Math.max(0, start - contextSize);
+      let gEnd = Math.min(n-1, end + contextSize);
+
+      // expand through adjacent non-change segments within contextSize
+      while (gStart > 0 && (start - gStart) < contextSize && !isChange(lines[gStart-1].type)) gStart--;
+      while (gEnd < n-1 && (gEnd - end) < contextSize && !isChange(lines[gEnd+1].type)) gEnd++;
+      groups.push({ start: gStart, end: gEnd });
+      start = end + 1;
+    }
+    return groups;
+  }
+
+  // Character-level intraline diff (minimal, highlights only changed characters)
+  function intralineDiffChars(a, b) {
+    const A = Array.from(a);
+    const B = Array.from(b);
+    const N = A.length, M = B.length;
+    const dp = Array.from({length: N+1}, () => new Uint16Array(M+1));
+    for (let i=1; i<=N; i++) {
+      const dpi = dp[i], dpim = dp[i-1];
+      for (let j=1; j<=M; j++) {
+        dpi[j] = A[i-1] === B[j-1] ? dpim[j-1] + 1 : (dpi[j-1] > dpim[j] ? dpi[j-1] : dpim[j]);
+      }
+    }
+    const aOut = [];
+    const bOut = [];
+    let i = N, j = M;
+    while (i>0 || j>0) {
+      if (i>0 && j>0 && A[i-1] === B[j-1]) {
+        const ch = A[i-1];
+        aOut.push(escapeHTML(ch));
+        bOut.push(escapeHTML(ch));
+        i--; j--;
+      } else if (j>0 && (i===0 || dp[i][j-1] >= dp[i-1][j])) {
+        bOut.push(`<ins>${escapeHTML(B[j-1])}</ins>`);
+        j--;
+      } else if (i>0) {
+        aOut.push(`<del>${escapeHTML(A[i-1])}</del>`);
+        i--;
+      }
+    }
+    aOut.reverse();
+    bOut.reverse();
+    return { aHTML: aOut.join(''), bHTML: bOut.join('') };
+  }
+
+  // --- Rendering ---
+  function escapeHTML(s) {
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+  }
+
+  function renderUnified(lines, container, wrap) {
+    const table = document.createElement('table');
+    table.className = `diff-table ${wrap ? 'wrap' : ''}`;
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+
+    for (const ln of lines) {
+      if (ln.type === 'gap') {
+        const tr = document.createElement('tr'); tr.className = 'hunk';
+        const td = document.createElement('td'); td.colSpan = 3; td.className = 'codecell';
+        const btn = document.createElement('button'); btn.className = 'hunk-btn'; btn.textContent = `Expand ${ln.count} hidden lines`;
+        btn.addEventListener('click', () => { ln.onExpand && ln.onExpand(); });
+        td.appendChild(btn); tr.appendChild(td); tbody.appendChild(tr); continue;
+      }
+      const tr = document.createElement('tr');
+      tr.className = ln.type;
+      const tdA = document.createElement('td'); tdA.className = 'gutter'; tdA.textContent = ln.a.num || '';
+      const tdB = document.createElement('td'); tdB.className = 'gutter'; tdB.textContent = ln.b.num || '';
+      const tdC = document.createElement('td'); tdC.className = 'codecell'; tdC.innerHTML = ln.html ?? escapeHTML(ln.b.text || ln.a.text || '');
+      tr.append(tdA, tdB, tdC); tbody.appendChild(tr);
+    }
+    container.innerHTML = ''; container.appendChild(table);
+  }
+
+  function renderSplit(lines, container, wrap) {
+    const table = document.createElement('table');
+    table.className = `diff-table ${wrap ? 'wrap' : ''}`;
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+
+    for (const ln of lines) {
+      if (ln.type === 'gap') {
+        const tr = document.createElement('tr'); tr.className = 'hunk';
+        const td = document.createElement('td'); td.colSpan = 4; td.className = 'codecell';
+        const btn = document.createElement('button'); btn.className = 'hunk-btn'; btn.textContent = `Expand ${ln.count} hidden lines`;
+        btn.addEventListener('click', () => { ln.onExpand && ln.onExpand(); });
+        td.appendChild(btn); tr.appendChild(td); tbody.appendChild(tr); continue;
+      }
+      if (ln.type === 'mod') {
+        const tr = document.createElement('tr'); tr.className = 'mod';
+        const tdALn = document.createElement('td'); tdALn.className = 'gutter'; tdALn.textContent = ln.a.num || '';
+        const tdACode = document.createElement('td'); tdACode.className = 'codecell cell-del'; tdACode.innerHTML = ln.a.html ?? escapeHTML(ln.a.text || '');
+        const tdBLn = document.createElement('td'); tdBLn.className = 'gutter'; tdBLn.textContent = ln.b.num || '';
+        const tdBCode = document.createElement('td'); tdBCode.className = 'codecell cell-add'; tdBCode.innerHTML = ln.b.html ?? escapeHTML(ln.b.text || '');
+        tr.append(tdALn, tdACode, tdBLn, tdBCode); tbody.appendChild(tr);
+        continue;
+      }
+      if (ln.type === 'add') {
+        const tr = document.createElement('tr'); tr.className = 'add';
+        const tdALn = document.createElement('td'); tdALn.className = 'gutter'; tdALn.textContent = '';
+        const tdACode = document.createElement('td'); tdACode.className = 'codecell'; tdACode.innerHTML = '';
+        const tdBLn = document.createElement('td'); tdBLn.className = 'gutter'; tdBLn.textContent = ln.b.num || '';
+        const tdBCode = document.createElement('td'); tdBCode.className = 'codecell cell-add'; tdBCode.innerHTML = ln.b.html ?? escapeHTML(ln.b.text || '');
+        tr.append(tdALn, tdACode, tdBLn, tdBCode); tbody.appendChild(tr);
+        continue;
+      }
+      if (ln.type === 'del') {
+        const tr = document.createElement('tr'); tr.className = 'del';
+        const tdALn = document.createElement('td'); tdALn.className = 'gutter'; tdALn.textContent = ln.a.num || '';
+        const tdACode = document.createElement('td'); tdACode.className = 'codecell cell-del'; tdACode.innerHTML = ln.a.html ?? escapeHTML(ln.a.text || '');
+        const tdBLn = document.createElement('td'); tdBLn.className = 'gutter'; tdBLn.textContent = '';
+        const tdBCode = document.createElement('td'); tdBCode.className = 'codecell'; tdBCode.innerHTML = '';
+        tr.append(tdALn, tdACode, tdBLn, tdBCode); tbody.appendChild(tr);
+        continue;
+      }
+      // context row
+      const tr = document.createElement('tr'); tr.className = 'ctx';
+      const tdALn = document.createElement('td'); tdALn.className = 'gutter'; tdALn.textContent = ln.a.num || '';
+      const tdACode = document.createElement('td'); tdACode.className = 'codecell'; tdACode.textContent = ln.a.text || '';
+      const tdBLn = document.createElement('td'); tdBLn.className = 'gutter'; tdBLn.textContent = ln.b.num || '';
+      const tdBCode = document.createElement('td'); tdBCode.className = 'codecell'; tdBCode.textContent = ln.b.text || '';
+      tr.append(tdALn, tdACode, tdBLn, tdBCode); tbody.appendChild(tr);
+    }
+    container.innerHTML = ''; container.appendChild(table);
+  }
+
+  // Transform line ops into renderable rows, with intraline for mods
+  function buildRenderableRows(pairedLines, contextSize, intraline=true) {
+    const groups = groupWithContext(pairedLines, contextSize);
+    const rows = [];
+    let cursor = 0;
+    const pushGap = (count, onExpand) => rows.push({ type: 'gap', count, onExpand });
+    for (const g of groups) {
+      // Prevent overlapping context windows from duplicating rows
+      const start = Math.max(g.start, cursor);
+      if (start > cursor) pushGap(start - cursor, () => expandGap(rows, cursor, start));
+      for (let i = start; i <= g.end; i++) {
+        const ln = pairedLines[i];
+        if (ln.type === 'mod' && intraline) {
+          const { aHTML, bHTML } = intralineDiffChars(ln.a.text, ln.b.text);
+          rows.push({ type: 'mod', a: { num: ln.a.num, text: ln.a.text, html: aHTML }, b: { num: ln.b.num, text: ln.b.text, html: bHTML } });
+        } else if (ln.type === 'add') {
+          rows.push({ type: 'add', a: { num: '', text: '' }, b: { num: ln.b.num, text: ln.b.text } });
+        } else if (ln.type === 'del') {
+          rows.push({ type: 'del', a: { num: ln.a.num, text: ln.a.text }, b: { num: '', text: '' } });
+        } else {
+          rows.push({ type: 'ctx', a: ln.a, b: ln.b });
+        }
+      }
+      cursor = g.end + 1;
+    }
+    if (cursor < pairedLines.length) pushGap(pairedLines.length - cursor, () => expandGap(rows, cursor, pairedLines.length));
+    return rows;
+  }
+
+  // Expand a gap: simplistic approach to rebuild without gaps
+  function expandGap(rows, from, to) {
+    // Re-render entirely without the triggered gap by setting a larger context.
+    render();
+  }
+
+  // --- UI state & wiring ---
+  const state = {
+    aName: '', bName: '',
+    aText: '', bText: '',
+    view: 'unified',
+    context: 3,
+    ignoreWhitespace: false,
+    wrap: true,
+  };
+
+  const els = {
+    fileA: document.getElementById('file-a'),
+    fileB: document.getElementById('file-b'),
+    dropA: document.getElementById('drop-a'),
+    dropB: document.getElementById('drop-b'),
+    run: document.getElementById('run'),
+    viewUnified: document.getElementById('view-unified'),
+    viewSplit: document.getElementById('view-sbs'),
+    context: document.getElementById('context'),
+    ignoreWS: document.getElementById('ignore-ws'),
+    wrap: document.getElementById('wrap-lines'),
+    samples: document.getElementById('samples'),
+    filename: document.getElementById('filename'),
+    summary: document.getElementById('summary'),
+    diffBody: document.getElementById('diff-body'),
+    diff: document.getElementById('diff'),
+    textA: document.getElementById('text-a'),
+    textB: document.getElementById('text-b'),
+  };
+
+  function setBusy(isBusy) {
+    els.diff.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+  }
+
+  function loadSample(kind) {
+    if (!kind) return;
+    const samples = {
+      tiny: {
+        aName: 'hello.txt', bName: 'hello.txt',
+        aText: 'hello world\nthis is a line\nunchanged\n',
+        bText: 'hello worlds\nthis is a line\nunchanged\n',
+      },
+      rename: {
+        aName: 'old_name.py', bName: 'new_name.py',
+        aText: 'def add(a, b):\n    return a + b\n\n# TODO: remove debug\nprint(add(2, 3))\n',
+        bText: 'def sum_values(a, b):\n    return a + b\n\nif __name__ == "__main__":\n    print(sum_values(2, 3))\n',
+      },
+      large: {
+        aName: 'data.csv', bName: 'data.csv',
+        aText: Array.from({length: 150}, (_,i)=> i===30? 'alpha,1,2': i===80? 'foo,bar,baz' : `row${i},a,b`).join('\n') + '\n',
+        bText: Array.from({length: 150}, (_,i)=> i===30? 'alpha,1,3': i===120? 'new,row,here' : `row${i},a,b`).join('\n') + '\n',
+      },
+    };
+    Object.assign(state, samples[kind]);
+    els.fileA.value = '';
+    els.fileB.value = '';
+    if (els.textA) els.textA.value = state.aText;
+    if (els.textB) els.textB.value = state.bText;
+    render();
+  }
+
+  function readFileTo(target) {
+    return (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed reading file'));
+      reader.onload = () => {
+        const text = typeof reader.result === 'string' ? reader.result : '';
+        resolve({ name: file.name, text });
+      };
+      reader.readAsText(file);
+    }).then(({name, text}) => { state[target+'Name'] = name; state[target+'Text'] = text; });
+  }
+
+  function setupDropzone(el, target) {
+    const on = (ev, fn) => el.addEventListener(ev, fn);
+    const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+    ['dragenter','dragover','dragleave','drop'].forEach(evt => on(evt, stop));
+    on('dragenter', () => el.classList.add('dragover'));
+    on('dragover', () => el.classList.add('dragover'));
+    on('dragleave', () => el.classList.remove('dragover'));
+    on('drop', async (e) => {
+      el.classList.remove('dragover');
+      const file = e.dataTransfer.files[0]; if (!file) return;
+      await readFileTo(target)(file);
+      if (target === 'a' && els.textA) els.textA.value = state.aText;
+      if (target === 'b' && els.textB) els.textB.value = state.bText;
+      render();
+    });
+    on('paste', async (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      if (text) {
+        state[target+'Name'] = target === 'a' ? 'pasted-old.txt' : 'pasted-new.txt';
+        state[target+'Text'] = text;
+        if (target === 'a' && els.textA) els.textA.value = text;
+        if (target === 'b' && els.textB) els.textB.value = text;
+        render();
+      }
+    });
+  }
+
+  function summarize(hunks) {
+    let additions = 0, deletions = 0, modifications = 0;
+    for (let i = 0; i < hunks.length; i++) {
+      const cur = hunks[i];
+      const nxt = hunks[i+1];
+      if (cur.type === 'del' && nxt && nxt.type === 'add') {
+        modifications++; i++; continue;
+      }
+      if (cur.type === 'add') { additions++; continue; }
+      if (cur.type === 'del') { deletions++; continue; }
+    }
+    return `${additions} additions, ${deletions} deletions, ${modifications} modifications`;
+  }
+
+  function render() {
+    setBusy(true);
+    const aName = state.aName || 'old.txt';
+    const bName = state.bName || 'new.txt';
+    els.filename.textContent = `${aName} → ${bName}`;
+
+    const { hunks } = computeLineDiff(state.aText, state.bText, { ignoreWhitespace: state.ignoreWhitespace });
+    const paired = pairModifications(hunks);
+    els.summary.textContent = summarize(hunks);
+
+    const rows = buildRenderableRows(paired, clamp(0, Number(state.context) || 0, 100), true);
+    if (state.view === 'unified') {
+      renderUnified(rows, els.diffBody, state.wrap);
+    } else {
+      renderSplit(rows, els.diffBody, state.wrap);
+    }
+    setBusy(false);
+  }
+
+  // Event wiring
+  els.viewUnified.addEventListener('change', () => { if (els.viewUnified.checked) { state.view = 'unified'; render(); } });
+  els.viewSplit.addEventListener('change', () => { if (els.viewSplit.checked) { state.view = 'split'; render(); } });
+  els.context.addEventListener('input', debounce(() => { state.context = Number(els.context.value) || 0; render(); }, 150));
+  els.ignoreWS.addEventListener('change', () => { state.ignoreWhitespace = els.ignoreWS.checked; render(); });
+  els.wrap.addEventListener('change', () => { state.wrap = els.wrap.checked; render(); });
+  els.run.addEventListener('click', () => render());
+  els.samples.addEventListener('change', (e) => loadSample(e.target.value));
+
+  els.fileA.addEventListener('change', async (e) => { const file = e.target.files[0]; if (!file) return; await readFileTo('a')(file); render(); });
+  els.fileB.addEventListener('change', async (e) => { const file = e.target.files[0]; if (!file) return; await readFileTo('b')(file); render(); });
+
+  setupDropzone(els.dropA, 'a');
+  setupDropzone(els.dropB, 'b');
+
+  // Inline editors wiring
+  if (els.textA) {
+    els.textA.addEventListener('input', debounce(() => {
+      state.aText = els.textA.value;
+      if (!state.aName) state.aName = 'manual-old.txt';
+      render();
+    }, 150));
+  }
+  if (els.textB) {
+    els.textB.addEventListener('input', debounce(() => {
+      state.bText = els.textB.value;
+      if (!state.bName) state.bName = 'manual-new.txt';
+      render();
+    }, 150));
+  }
+
+  // Initial sample for quick demo
+  loadSample('tiny');
+  </script>
+</body>
+</html>
